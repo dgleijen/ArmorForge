@@ -76,7 +76,6 @@ function ARMOR.unequip(player, slot)
     end
 
     if old_stack and not old_stack:is_empty() then
-        -- Overflow-safe handling
         local inv = player:get_inventory()
         if inv and inv:room_for_item("main", old_stack) then
             inv:add_item("main", old_stack)
