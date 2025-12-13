@@ -38,7 +38,6 @@ function ARMOR.register_pre_unequip(func)
     table.insert(ARMOR.pre_unequip_callbacks, func)
 end
 
--- Equip / Unequip
 function ARMOR.equip(player, stack, slot)
     if not player or not stack or stack:is_empty() or not is_valid_slot(slot) then
         return false
