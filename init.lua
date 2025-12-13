@@ -229,11 +229,12 @@ function ARMOR.sync_detached(player)
         inv:set_stack("main", i, equipped[slot] or ItemStack(""))
     end
 end
-minetest.register_on_leaveplayer(function(player)
+
+core.register_on_leaveplayer(function(player)
     ARMOR.save_equipped(player)
 end)
 
-minetest.register_on_joinplayer(function(player)
+core.register_on_joinplayer(function(player)
     ARMOR.restore_equipped_from_storage(player)
     ARMOR.create_detached_inventory(player)
 end)
