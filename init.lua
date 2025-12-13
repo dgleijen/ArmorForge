@@ -75,13 +75,6 @@ function ARMOR.unequip(player, slot)
     end
 
     if old_stack and not old_stack:is_empty() then
-        local inv = player:get_inventory()
-        if inv and inv:room_for_item("main", old_stack) then
-            inv:add_item("main", old_stack)
-        else
-            minetest.item_drop(old_stack, player, player:get_pos())
-        end
-
         for _, cb in ipairs(ARMOR.on_unequip_callbacks) do
             cb(player, old_stack, slot)
         end
@@ -150,7 +143,7 @@ function ARMOR.get_equipped_list(player)
         table.insert(list, {
             slot = slot,
             item = stack:get_name(),
-            stack = ItemStack(stack),
+            stack = stack:to_string(),  -- save as string
         })
     end
     return list
@@ -159,8 +152,11 @@ end
 function ARMOR.restore_equipped(player, item_list)
     if not player or not item_list then return false end
     for _, entry in ipairs(item_list) do
-        if entry.stack and not entry.stack:is_empty() then
-            ARMOR.equip(player, entry.stack, entry.slot)
+        if entry.stack and entry.stack ~= "" then
+            local stack = ItemStack(entry.stack)  -- rebuild from string
+            if not stack:is_empty() then
+                ARMOR.equip(player, stack, entry.slot)
+            end
         end
     end
     return true
@@ -234,7 +230,52 @@ end)
 
 core.register_on_joinplayer(function(player)
     ARMOR.restore_equipped_from_storage(player)
+     ARMOR.sync_detached(player) 
     ARMOR.create_detached_inventory(player)
+
 end)
 
+minetest.register_on_player_hpchange(function(player, hp_change, reason)
+    if hp_change < 0 then
+        local stats = armorforge.get_stats(player)
+        local defense = stats.armor or 0
+        local block   = stats.block or 0
+
+        local reduced = hp_change * (1 - defense / 100)
+
+        if block > 0 and math.random(100) <= block then
+            local shield = armorforge.get_equipped_in_slot(player, "shield")
+            if shield and not shield:is_empty() then
+                local def = shield:get_definition()
+                local wear = 1 + ((def and def.block_wear) or 0)
+                shield:add_wear(wear)
+            end
+            return 0 
+        end
+
+        return reduced
+    end
+
+    return hp_change
+end, true)
+
+local old_knockback = core.calculate_knockback
+
+function core.calculate_knockback(player, hitter, time_from_last_punch, tool_capabilities, dir, distance, damage)
+    local knockback = old_knockback(player, hitter, time_from_last_punch, tool_capabilities, dir, distance, damage)
+
+    local stats = armorforge.get_stats(player)
+    local defense = stats.armor or 0
+    local block   = stats.block or 0
+
+    if block > 0 and math.random(100) <= block then
+        return {x=0, y=0, z=0}
+    end
+
+    if defense > 0 then
+        knockback = vector.multiply(knockback, 1 - defense / 100)
+    end
+
+    return knockback
+end
 armorforge = ARMOR
