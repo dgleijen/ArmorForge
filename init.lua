@@ -238,22 +238,21 @@ end)
 minetest.register_on_player_hpchange(function(player, hp_change, reason)
     if hp_change < 0 then
         local stats = armorforge.get_stats(player)
+
         local defense = stats.armor or 0
-        local block   = stats.block or 0
+        if defense < 0 then defense = 0 end
+        if defense > 95 then defense = 95 end
 
-        local reduced = hp_change * (1 - defense / 100)
-
+        local block = stats.block or 0
         if block > 0 and math.random(100) <= block then
-            local shield = armorforge.get_equipped_in_slot(player, "shield")
-            if shield and not shield:is_empty() then
-                local def = shield:get_definition()
-                local wear = 1 + ((def and def.block_wear) or 0)
-                shield:add_wear(wear)
-            end
-            return 0 
+            return 0
         end
 
-        return reduced
+        local incoming = -hp_change 
+        local reduced_mag = incoming * (1 - defense / 100)
+        local final_mag = math.max(1, math.floor(reduced_mag + 0.0001))
+
+        return -final_mag
     end
 
     return hp_change
