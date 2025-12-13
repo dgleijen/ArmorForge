@@ -1,62 +1,92 @@
-
 local ARMOR = {}
 local PLAYER_ARMOR = {}
 local storage = minetest.get_mod_storage()
 
-ARMOR.slots = {"helmet", "chest", "leggings", "boots"}
+ARMOR.slots = {"helmet", "chest", "leggings", "boots", "shield"}
+ARMOR.on_equip_callbacks = {}
+ARMOR.on_unequip_callbacks = {}
+ARMOR.pre_equip_callbacks = {}
+ARMOR.pre_unequip_callbacks = {}
 
+ARMOR.default_stats = {speed=0, gravity=0, jump=0, armor=0, knockback=0}
+
+local function get_inv_name(player)
+    return "armorforge3d_" .. player:get_player_name()
+end
+
+local function is_valid_slot(slot)
+    for _, s in ipairs(ARMOR.slots) do
+        if s == slot then return true end
+    end
+    return false
+end
+
+-- Callback registration
+function ARMOR.register_on_equip(func)
+    table.insert(ARMOR.on_equip_callbacks, func)
+end
+
+function ARMOR.register_on_unequip(func)
+    table.insert(ARMOR.on_unequip_callbacks, func)
+end
+
+function ARMOR.register_pre_equip(func)
+    table.insert(ARMOR.pre_equip_callbacks, func)
+end
+
+function ARMOR.register_pre_unequip(func)
+    table.insert(ARMOR.pre_unequip_callbacks, func)
+end
+
+-- Equip / Unequip
 function ARMOR.equip(player, stack, slot)
-    if not player or not stack or stack:is_empty() then return false end
-    local name = player:get_player_name()
-
-    PLAYER_ARMOR[name] = PLAYER_ARMOR[name] or {}
-
-    -- Detach any existing entity in this slot
-    itemforge3d.detach_entity(player, nil, {id = slot})
-
-    -- Return old stack if present
-    local old_stack = PLAYER_ARMOR[name][slot]
-    if old_stack and not old_stack:is_empty() then
-        local inv = player:get_inventory()
-        if inv and not inv:room_for_item("main", old_stack) then
-            -- Drop at player’s feet if inventory is full
-            minetest.add_item(player:get_pos(), old_stack)
-        else
-            inv:add_item("main", old_stack)
+    if not player or not stack or stack:is_empty() or not is_valid_slot(slot) then
+        return false
+    end
+    for _, cb in ipairs(ARMOR.pre_equip_callbacks) do
+        if cb(player, stack, slot) == false then
+            return false
         end
     end
 
-    -- Attach new armor piece
-    itemforge3d.attach_entity(player, stack, {id = slot})
-
-    -- Save equipped stack
+    local name = player:get_player_name()
+    PLAYER_ARMOR[name] = PLAYER_ARMOR[name] or {}
     PLAYER_ARMOR[name][slot] = ItemStack(stack)
+
+    for _, cb in ipairs(ARMOR.on_equip_callbacks) do
+        cb(player, stack, slot)
+    end
 
     return true
 end
 
 function ARMOR.unequip(player, slot)
-    if not player then return false end
+    if not player or not is_valid_slot(slot) then return false end
     local name = player:get_player_name()
-
     local old_stack = PLAYER_ARMOR[name] and PLAYER_ARMOR[name][slot]
 
-    -- Detach entity
-    itemforge3d.detach_entity(player, nil, {id = slot})
-
-    -- Return old stack if present
-    if old_stack and not old_stack:is_empty() then
-        local inv = player:get_inventory()
-        if inv and not inv:room_for_item("main", old_stack) then
-            -- Drop at player’s feet if inventory is full
-            minetest.add_item(player:get_pos(), old_stack)
-        else
-            inv:add_item("main", old_stack)
+    for _, cb in ipairs(ARMOR.pre_unequip_callbacks) do
+        if cb(player, old_stack, slot) == false then
+            return false
         end
     end
 
     if PLAYER_ARMOR[name] then
         PLAYER_ARMOR[name][slot] = nil
+    end
+
+    if old_stack and not old_stack:is_empty() then
+        -- Overflow-safe handling
+        local inv = player:get_inventory()
+        if inv and inv:room_for_item("main", old_stack) then
+            inv:add_item("main", old_stack)
+        else
+            minetest.item_drop(old_stack, player, player:get_pos())
+        end
+
+        for _, cb in ipairs(ARMOR.on_unequip_callbacks) do
+            cb(player, old_stack, slot)
+        end
     end
 
     return true
@@ -65,11 +95,9 @@ end
 function ARMOR.count_stats(player)
     local name = player:get_player_name()
     local equipped = PLAYER_ARMOR[name]
-    if not equipped then
-        return {speed=0, gravity=0, jump=0, armor=0, knockback=0}
-    end
+    local totals = table.copy(ARMOR.default_stats)
 
-    local totals = {speed=0, gravity=0, jump=0, armor=0, knockback=0}
+    if not equipped then return totals end
 
     for slot, stack in pairs(equipped) do
         local def = stack:get_definition()
@@ -102,18 +130,16 @@ function ARMOR.get_equipped(player)
 end
 
 function ARMOR.get_equipped_in_slot(player, slot)
-    if not player then return nil end
+    if not player or not is_valid_slot(slot) then return nil end
     local name = player:get_player_name()
     local equipped = PLAYER_ARMOR[name]
     if not equipped then return nil end
-
-    return equipped[slot] 
+    return equipped[slot]
 end
 
 function ARMOR.has_equipped(player, slot)
     return ARMOR.get_equipped_in_slot(player, slot) ~= nil
 end
-
 
 function ARMOR.get_equipped_list(player)
     if not player then return {} end
@@ -126,12 +152,11 @@ function ARMOR.get_equipped_list(player)
         table.insert(list, {
             slot = slot,
             item = stack:get_name(),
-            stack = ItemStack(stack), 
+            stack = ItemStack(stack),
         })
     end
     return list
 end
-
 
 function ARMOR.restore_equipped(player, item_list)
     if not player or not item_list then return false end
@@ -164,15 +189,12 @@ end
 
 function ARMOR.create_detached_inventory(player)
     if not player then return nil end
-    local name = player:get_player_name()
-    local inv_name = "armor_" .. name
+    local inv_name = get_inv_name(player)
 
-    -- Remove old detached inventory if it exists
     if minetest.get_inventory({type="detached", name=inv_name}) then
         minetest.remove_detached_inventory(inv_name)
     end
 
-    -- Create new detached inventory
     local inv = minetest.create_detached_inventory(inv_name, {
         allow_put = function(inv, listname, index, stack, player)
             return stack:get_count()
@@ -183,54 +205,37 @@ function ARMOR.create_detached_inventory(player)
         on_put = function(inv, listname, index, stack, player)
             local slot = ARMOR.slots[index]
             ARMOR.equip(player, stack, slot)
-            ARMOR.sync_detached(player) -- keep GUI in sync
+            ARMOR.sync_detached(player)
         end,
         on_take = function(inv, listname, index, stack, player)
             local slot = ARMOR.slots[index]
-            -- Only detach + clear slot, DO NOT re-add to inventory
-            itemforge3d.detach_entity(player, nil, {id = slot})
-            if PLAYER_ARMOR[name] then
-                PLAYER_ARMOR[name][slot] = nil
-            end
-            ARMOR.sync_detached(player) -- keep GUI in sync
-        end,
+            ARMOR.unequip(player, slot)
+            ARMOR.sync_detached(player)
+        end
     })
 
     inv:set_size("main", #ARMOR.slots)
-
-    -- Fill with currently equipped items
     ARMOR.sync_detached(player)
-
     return inv_name
 end
 
--- Helper to sync detached inventory with actual equipped state
 function ARMOR.sync_detached(player)
     if not player then return end
-    local name = player:get_player_name()
-    local inv = minetest.get_inventory({type="detached", name="armor_" .. name})
+    local inv = minetest.get_inventory({type="detached", name=get_inv_name(player)})
     if not inv then return end
 
     local equipped = ARMOR.get_equipped(player)
     for i, slot in ipairs(ARMOR.slots) do
-        if equipped[slot] then
-            inv:set_stack("main", i, equipped[slot])
-        else
-            inv:set_stack("main", i, ItemStack(nil))
-        end
+        inv:set_stack("main", i, equipped[slot] or ItemStack(""))
     end
 end
+minetest.register_on_leaveplayer(function(player)
+    ARMOR.save_equipped(player)
+end)
 
-minetest.register_chatcommand("armor", {
-    description = "Open armor GUI",
-    func = function(name)
-        local fs = "size[8,9]" ..
-                   "label[3,0;Armor Slots]" ..
-                   "list[detached:armor_" .. name .. ";main;3,1;1,4;]" ..
-                   "list[current_player;main;0,5;8,4;]" ..
-                   "listring[detached:armor_" .. name .. ";main]" ..
-                   "listring[current_player;main]"
-        minetest.show_formspec(name, "armor:gui", fs)
-    end,
-})
+minetest.register_on_joinplayer(function(player)
+    ARMOR.restore_equipped_from_storage(player)
+    ARMOR.create_detached_inventory(player)
+end)
+
 armorforge3d = ARMOR
