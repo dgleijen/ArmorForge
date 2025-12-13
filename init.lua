@@ -11,7 +11,7 @@ ARMOR.pre_unequip_callbacks = {}
 ARMOR.default_stats = {speed=0, gravity=0, jump=0, armor=0, knockback=0}
 
 local function get_inv_name(player)
-    return "armorforge3d_" .. player:get_player_name()
+    return "armorforge_" .. player:get_player_name()
 end
 
 local function is_valid_slot(slot)
@@ -171,14 +171,14 @@ function ARMOR.save_equipped(player)
     local name = player:get_player_name()
     local list = ARMOR.get_equipped_list(player)
     local data = minetest.serialize(list)
-    storage:set_string("armor_" .. name, data)
+    storage:set_string("armorforge_" .. name, data)
     return true
 end
 
 function ARMOR.restore_equipped_from_storage(player)
     if not player then return false end
     local name = player:get_player_name()
-    local data = storage:get_string("armor_" .. name)
+    local data = storage:get_string("armorforge_" .. name)
     if data == "" then return false end
     local list = minetest.deserialize(data)
     if not list then return false end
@@ -237,4 +237,4 @@ core.register_on_joinplayer(function(player)
     ARMOR.create_detached_inventory(player)
 end)
 
-armorforge3d = ARMOR
+armorforge = ARMOR
