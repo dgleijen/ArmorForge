@@ -5,16 +5,7 @@
 - Detached inventory integration
 - Stat aggregation (speed, gravity, jump, armor, knockback)
 - Metadata preservation for equipped items
-
----
-
-## Installation
-1. Place the mod folder in your Minetest `mods/` directory.
-2. Add `armorforge` to your `world.mt` file.
-3. Start Minetest and enjoy!
-
----
-
+- 
 ## API Reference
 
 ### Callback Registration
