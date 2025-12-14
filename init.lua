@@ -31,21 +31,38 @@ end
 local PHYSICS_MOD = check_mod()
 
 --Helper Functions
+
+local PHYSICS_STRING = "armorforge:armor"
+
 local function apply_physics(player)
     local stats = ARMOR.get_stats(player)
     local name = player:get_player_name()
 
     if PHYSICS_MOD == "pova" then
-        pova.del_override(name, "armorforge:armor")
-        pova.add_override(name, "armorforge:armor", {
+        pova.del_override(name, PHYSICS_STRING)
+        pova.add_override(name, PHYSICS_STRING, {
             speed   = stats.speed,
             gravity = stats.gravity,
             jump    = stats.jump,
         })
         pova.do_override(player)
+
+    elseif PHYSICS_MOD == "player_monoids" then
+        for _, stat in ipairs({"jump", "speed", "gravity"}) do
+            player_monoids[stat]:del_change(player, PHYSICS_STRING)
+        end
+        local overrides = {
+            speed   = stats.speed,
+            gravity = stats.gravity,
+            jump    = stats.jump,
+        }
+        for key, value in pairs(overrides) do
+            player_monoids[key]:add_change(player, value, PHYSICS_STRING)
+        end
+
     else
-        BUILTIN.del(name, "armorforge:armor")
-        BUILTIN.add(name, "armorforge:armor", {
+        BUILTIN.del(name, PHYSICS_STRING)
+        BUILTIN.add(name, PHYSICS_STRING, {
             speed   = stats.speed,
             gravity = stats.gravity,
             jump    = stats.jump,
