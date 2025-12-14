@@ -1,6 +1,32 @@
 local ARMOR = {}
 local PLAYER_ARMOR = {}
 local storage = minetest.get_mod_storage()
+local has_pova  = core.global_exists("pova")
+
+local PHYSICS = dofile(core.get_modpath(core.get_current_modname()) .. "/physx.lua")
+
+function ARMOR.apply_physics(player)
+    local stats = ARMOR.get_stats(player)
+    local name = player:get_player_name()
+
+    if has_pova then
+        pova.del_override(name, "armorforge:armor")
+        pova.add_override(name, "armorforge:armor", {
+            speed   = stats.speed,
+            gravity = stats.gravity,
+            jump    = stats.jump,
+        })
+        pova.do_override(player)
+    else
+        PHYSICS.del(name, "armorforge:armor")
+        PHYSICS.add(name, "armorforge:armor", {
+            speed   = stats.speed,
+            gravity = stats.gravity,
+            jump    = stats.jump,
+        })
+        PHYSICS.apply(player)
+    end
+end
 
 ARMOR.slots = {"helmet", "chest", "leggings", "boots", "shield"}
 ARMOR.on_equip_callbacks = {}
@@ -8,7 +34,7 @@ ARMOR.on_unequip_callbacks = {}
 ARMOR.pre_equip_callbacks = {}
 ARMOR.pre_unequip_callbacks = {}
 
-ARMOR.default_stats = {speed=0, gravity=0, jump=0, armor=0, knockback=0}
+ARMOR.default_stats = {speed=0, gravity=0, jump=0, armor=0, knockback=0, block=0}
 
 local function get_inv_name(player)
     return "armorforge_" .. player:get_player_name()
@@ -52,6 +78,8 @@ function ARMOR.equip(player, stack, slot)
     PLAYER_ARMOR[name] = PLAYER_ARMOR[name] or {}
     PLAYER_ARMOR[name][slot] = ItemStack(stack)
 
+    ARMOR.apply_physics(player)
+
     for _, cb in ipairs(ARMOR.on_equip_callbacks) do
         cb(player, stack, slot)
     end
@@ -73,6 +101,8 @@ function ARMOR.unequip(player, slot)
     if PLAYER_ARMOR[name] then
         PLAYER_ARMOR[name][slot] = nil
     end
+
+    ARMOR.apply_physics(player)
 
     if old_stack and not old_stack:is_empty() then
         for _, cb in ipairs(ARMOR.on_unequip_callbacks) do
@@ -98,6 +128,7 @@ function ARMOR.count_stats(player)
             totals.jump      = totals.jump      + (def.armor.jump or 0)
             totals.armor     = totals.armor     + (def.armor.armor or 0)
             totals.knockback = totals.knockback + (def.armor.knockback or 0)
+            totals.block = totals.block + (def.armor.block or 0)
         end
     end
 
@@ -237,7 +268,7 @@ end)
 
 minetest.register_on_player_hpchange(function(player, hp_change, reason)
     if hp_change < 0 then
-        local stats = armorforge.get_stats(player)
+        local stats = ARMOR.get_stats(player)
 
         local defense = stats.armor or 0
         if defense < 0 then defense = 0 end
@@ -263,7 +294,7 @@ local old_knockback = core.calculate_knockback
 function core.calculate_knockback(player, hitter, time_from_last_punch, tool_capabilities, dir, distance, damage)
     local knockback = old_knockback(player, hitter, time_from_last_punch, tool_capabilities, dir, distance, damage)
 
-    local stats = armorforge.get_stats(player)
+    local stats = ARMOR.get_stats(player)
     local defense = stats.armor or 0
     local block   = stats.block or 0
 
