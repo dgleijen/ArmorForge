@@ -1,15 +1,41 @@
 local ARMOR = {}
 local PLAYER_ARMOR = {}
-local storage = minetest.get_mod_storage()
-local has_pova  = core.global_exists("pova")
 
-local PHYSICS = dofile(core.get_modpath(core.get_current_modname()) .. "/physx.lua")
+local STORAGE = core.get_mod_storage()
 
-function ARMOR.apply_physics(player)
+-- Default
+local DEFAULT_SLOTS = {"helmet", "chest", "leggings", "boots", "shield"}
+local DEFAULT_STATS = {speed=0, gravity=0, jump=0, armor=0, knockback=0, block=0}
+
+--Callbacks
+local ON_EQUIP = {}
+local ON_UNEQUIP = {}
+local PRE_EQUIP = {}
+local PRE_UNEQUIP = {}
+
+-- Check Physics
+local MODPATH = core.get_modpath(core.get_current_modname()) 
+local HAS_POVA  = MODPATH ~= nil and core.global_exists("pova")
+local HAS_MONOIDS  = MODPATH ~= nil and core.global_exists("player_monoids")
+local BUILTIN = dofile(core.get_modpath(core.get_current_modname()) .. "/physx.lua")
+local check_mod = function()
+    if HAS_POVA then
+        return "pova"
+    elseif HAS_MONOIDS then
+        return "player_monoids"
+    else
+        return "builtin"
+    end
+end
+
+local PHYSICS_MOD = check_mod()
+
+--Helper Functions
+local function apply_physics(player)
     local stats = ARMOR.get_stats(player)
     local name = player:get_player_name()
 
-    if has_pova then
+    if PHYSICS_MOD == "pova" then
         pova.del_override(name, "armorforge:armor")
         pova.add_override(name, "armorforge:armor", {
             speed   = stats.speed,
@@ -18,105 +44,31 @@ function ARMOR.apply_physics(player)
         })
         pova.do_override(player)
     else
-        PHYSICS.del(name, "armorforge:armor")
-        PHYSICS.add(name, "armorforge:armor", {
+        BUILTIN.del(name, "armorforge:armor")
+        BUILTIN.add(name, "armorforge:armor", {
             speed   = stats.speed,
             gravity = stats.gravity,
             jump    = stats.jump,
         })
-        PHYSICS.apply(player)
+        BUILTIN.apply(player)
     end
 end
-
-ARMOR.slots = {"helmet", "chest", "leggings", "boots", "shield"}
-ARMOR.on_equip_callbacks = {}
-ARMOR.on_unequip_callbacks = {}
-ARMOR.pre_equip_callbacks = {}
-ARMOR.pre_unequip_callbacks = {}
-
-ARMOR.default_stats = {speed=0, gravity=0, jump=0, armor=0, knockback=0, block=0}
 
 local function get_inv_name(player)
     return "armorforge_" .. player:get_player_name()
 end
 
 local function is_valid_slot(slot)
-    for _, s in ipairs(ARMOR.slots) do
+    for _, s in ipairs(DEFAULT_SLOTS) do
         if s == slot then return true end
     end
     return false
 end
 
--- Callback registration
-function ARMOR.register_on_equip(func)
-    table.insert(ARMOR.on_equip_callbacks, func)
-end
-
-function ARMOR.register_on_unequip(func)
-    table.insert(ARMOR.on_unequip_callbacks, func)
-end
-
-function ARMOR.register_pre_equip(func)
-    table.insert(ARMOR.pre_equip_callbacks, func)
-end
-
-function ARMOR.register_pre_unequip(func)
-    table.insert(ARMOR.pre_unequip_callbacks, func)
-end
-
-function ARMOR.equip(player, stack, slot)
-    if not player or not stack or stack:is_empty() or not is_valid_slot(slot) then
-        return false
-    end
-    for _, cb in ipairs(ARMOR.pre_equip_callbacks) do
-        if cb(player, stack, slot) == false then
-            return false
-        end
-    end
-
-    local name = player:get_player_name()
-    PLAYER_ARMOR[name] = PLAYER_ARMOR[name] or {}
-    PLAYER_ARMOR[name][slot] = ItemStack(stack)
-
-    ARMOR.apply_physics(player)
-
-    for _, cb in ipairs(ARMOR.on_equip_callbacks) do
-        cb(player, stack, slot)
-    end
-
-    return true
-end
-
-function ARMOR.unequip(player, slot)
-    if not player or not is_valid_slot(slot) then return false end
-    local name = player:get_player_name()
-    local old_stack = PLAYER_ARMOR[name] and PLAYER_ARMOR[name][slot]
-
-    for _, cb in ipairs(ARMOR.pre_unequip_callbacks) do
-        if cb(player, old_stack, slot) == false then
-            return false
-        end
-    end
-
-    if PLAYER_ARMOR[name] then
-        PLAYER_ARMOR[name][slot] = nil
-    end
-
-    ARMOR.apply_physics(player)
-
-    if old_stack and not old_stack:is_empty() then
-        for _, cb in ipairs(ARMOR.on_unequip_callbacks) do
-            cb(player, old_stack, slot)
-        end
-    end
-
-    return true
-end
-
-function ARMOR.count_stats(player)
+function count_stats(player)
     local name = player:get_player_name()
     local equipped = PLAYER_ARMOR[name]
-    local totals = table.copy(ARMOR.default_stats)
+    local totals = table.copy(DEFAULT_STATS)
 
     if not equipped then return totals end
 
@@ -135,8 +87,75 @@ function ARMOR.count_stats(player)
     return totals
 end
 
+-- API
+
 function ARMOR.get_stats(player)
-    return ARMOR.count_stats(player)
+    return count_stats(player)
+end
+
+function ARMOR.register_on_equip(func)
+    table.insert(ON_EQUIP, func)
+end
+
+function ARMOR.register_on_unequip(func)
+    table.insert(ON_UNEQUIP, func)
+end
+
+function ARMOR.register_pre_equip(func)
+    table.insert(PRE_EQUIP, func)
+end
+
+function ARMOR.register_pre_unequip(func)
+    table.insert(PRE_UNEQUIP, func)
+end
+
+function ARMOR.equip(player, stack, slot)
+    if not player or not stack or stack:is_empty() or not is_valid_slot(slot) then
+        return false
+    end
+    for _, cb in ipairs(PRE_EQUIP) do
+        if cb(player, stack, slot) == false then
+            return false
+        end
+    end
+
+    local name = player:get_player_name()
+    PLAYER_ARMOR[name] = PLAYER_ARMOR[name] or {}
+    PLAYER_ARMOR[name][slot] = ItemStack(stack)
+
+    apply_physics(player)
+
+    for _, cb in ipairs(ON_EQUIP) do
+        cb(player, stack, slot)
+    end
+
+    return true
+end
+
+function ARMOR.unequip(player, slot)
+    if not player or not is_valid_slot(slot) then return false end
+    local name = player:get_player_name()
+    local old_stack = PLAYER_ARMOR[name] and PLAYER_ARMOR[name][slot]
+
+    for _, cb in ipairs(PRE_UNEQUIP) do
+        if cb(player, old_stack, slot) == false then
+            return false
+        end
+    end
+
+    if PLAYER_ARMOR[name] then
+        PLAYER_ARMOR[name][slot] = nil
+    end
+
+    apply_physics(player)
+
+    if old_stack and not old_stack:is_empty() then
+        for _, cb in ipairs(ON_UNEQUIP) do
+            cb(player, old_stack, slot)
+        end
+    end
+
+    return true
 end
 
 function ARMOR.get_equipped(player)
@@ -180,7 +199,20 @@ function ARMOR.get_equipped_list(player)
     return list
 end
 
-function ARMOR.restore_equipped(player, item_list)
+-- Itemstack management 
+
+function sync_detached(player)
+    if not player then return end
+    local inv = core.get_inventory({type="detached", name=get_inv_name(player)})
+    if not inv then return end
+
+    local equipped = ARMOR.get_equipped(player)
+    for i, slot in ipairs(DEFAULT_SLOTS) do
+        inv:set_stack("main", i, equipped[slot] or ItemStack(""))
+    end
+end
+
+local function restore_equipped(player, item_list)
     if not player or not item_list then return false end
     for _, entry in ipairs(item_list) do
         if entry.stack and entry.stack ~= "" then
@@ -193,34 +225,34 @@ function ARMOR.restore_equipped(player, item_list)
     return true
 end
 
-function ARMOR.save_equipped(player)
+function restore_equipped_from_storage(player)
+    if not player then return false end
+    local name = player:get_player_name()
+    local data = STORAGE:get_string("armorforge_" .. name)
+    if data == "" then return false end
+    local list = core.deserialize(data)
+    if not list then return false end
+    return restore_equipped(player, list)
+end
+
+local function save_equipped(player)
     if not player then return false end
     local name = player:get_player_name()
     local list = ARMOR.get_equipped_list(player)
-    local data = minetest.serialize(list)
-    storage:set_string("armorforge_" .. name, data)
+    local data = core.serialize(list)
+    STORAGE:set_string("armorforge_" .. name, data)
     return true
 end
 
-function ARMOR.restore_equipped_from_storage(player)
-    if not player then return false end
-    local name = player:get_player_name()
-    local data = storage:get_string("armorforge_" .. name)
-    if data == "" then return false end
-    local list = minetest.deserialize(data)
-    if not list then return false end
-    return ARMOR.restore_equipped(player, list)
-end
-
-function ARMOR.create_detached_inventory(player)
+function create_detached_inventory(player)
     if not player then return nil end
     local inv_name = get_inv_name(player)
 
-    if minetest.get_inventory({type="detached", name=inv_name}) then
-        minetest.remove_detached_inventory(inv_name)
+    if core.get_inventory({type="detached", name=inv_name}) then
+        core.remove_detached_inventory(inv_name)
     end
 
-    local inv = minetest.create_detached_inventory(inv_name, {
+    local inv = core.create_detached_inventory(inv_name, {
         allow_put = function(inv, listname, index, stack, player)
             return stack:get_count()
         end,
@@ -228,45 +260,33 @@ function ARMOR.create_detached_inventory(player)
             return stack:get_count()
         end,
         on_put = function(inv, listname, index, stack, player)
-            local slot = ARMOR.slots[index]
+            local slot = DEFAULT_SLOTS[index]
             ARMOR.equip(player, stack, slot)
-            ARMOR.sync_detached(player)
+            sync_detached(player)
         end,
         on_take = function(inv, listname, index, stack, player)
-            local slot = ARMOR.slots[index]
+            local slot = DEFAULT_SLOTS[index]
             ARMOR.unequip(player, slot)
-            ARMOR.sync_detached(player)
+            sync_detached(player)
         end
     })
 
-    inv:set_size("main", #ARMOR.slots)
-    ARMOR.sync_detached(player)
+    inv:set_size("main", #DEFAULT_SLOTS)
+    sync_detached(player)
     return inv_name
 end
 
-function ARMOR.sync_detached(player)
-    if not player then return end
-    local inv = minetest.get_inventory({type="detached", name=get_inv_name(player)})
-    if not inv then return end
-
-    local equipped = ARMOR.get_equipped(player)
-    for i, slot in ipairs(ARMOR.slots) do
-        inv:set_stack("main", i, equipped[slot] or ItemStack(""))
-    end
-end
-
 core.register_on_leaveplayer(function(player)
-    ARMOR.save_equipped(player)
+    save_equipped(player)
 end)
 
 core.register_on_joinplayer(function(player)
-    ARMOR.restore_equipped_from_storage(player)
-     ARMOR.sync_detached(player) 
-    ARMOR.create_detached_inventory(player)
-
+    restore_equipped_from_storage(player)
+    sync_detached(player) 
+    create_detached_inventory(player)
 end)
 
-minetest.register_on_player_hpchange(function(player, hp_change, reason)
+core.register_on_player_hpchange(function(player, hp_change, reason)
     if hp_change < 0 then
         local stats = ARMOR.get_stats(player)
 
@@ -308,4 +328,8 @@ function core.calculate_knockback(player, hitter, time_from_last_punch, tool_cap
 
     return knockback
 end
-armorforge = ARMOR
+
+armorforge = {
+    api = ARMOR,
+    physics = BUILTIN,
+}
