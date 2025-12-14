@@ -286,6 +286,8 @@ core.register_on_joinplayer(function(player)
     create_detached_inventory(player)
 end)
 
+
+-- HP and Knockback calculations with stats
 core.register_on_player_hpchange(function(player, hp_change, reason)
     if hp_change < 0 then
         local stats = ARMOR.get_stats(player)
