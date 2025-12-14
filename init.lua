@@ -4,16 +4,16 @@ local PLAYER_ARMOR = {}
 local STORAGE = core.get_mod_storage()
 
 -- Default
-local DEFAULT_SLOTS = {"helmet", "chest", "leggings", "boots", "shield"}
+local DEFAULT_SLOTS = {"helmet", "chest", "leggings", "boots", "shield", "offhand"}
 local DEFAULT_STATS = {speed=0, gravity=0, jump=0, armor=0, knockback=0, block=0}
 
---Callbacks
+-- Callbacks
 local ON_EQUIP = {}
 local ON_UNEQUIP = {}
 local PRE_EQUIP = {}
 local PRE_UNEQUIP = {}
 
--- Check Physics
+-- Physics backend check
 local MODPATH = core.get_modpath(core.get_current_modname()) 
 local HAS_POVA  = MODPATH ~= nil and core.global_exists("pova")
 local HAS_MONOIDS  = MODPATH ~= nil and core.global_exists("player_monoids")
@@ -30,8 +30,7 @@ end
 
 local PHYSICS_MOD = check_mod()
 
---Helper Functions
-
+-- Helper Functions
 local PHYSICS_STRING = "armorforge:armor"
 
 local function apply_physics(player)
@@ -82,6 +81,7 @@ local function is_valid_slot(slot)
     return false
 end
 
+-- Stats calculation (offhand ignored)
 function count_stats(player)
     local name = player:get_player_name()
     local equipped = PLAYER_ARMOR[name]
@@ -90,14 +90,17 @@ function count_stats(player)
     if not equipped then return totals end
 
     for slot, stack in pairs(equipped) do
-        local def = stack:get_definition()
-        if def and def.armor then
-            totals.speed     = totals.speed     + (def.armor.speed or 0)
-            totals.gravity   = totals.gravity   + (def.armor.gravity or 0)
-            totals.jump      = totals.jump      + (def.armor.jump or 0)
-            totals.armor     = totals.armor     + (def.armor.armor or 0)
-            totals.knockback = totals.knockback + (def.armor.knockback or 0)
-            totals.block = totals.block + (def.armor.block or 0)
+        -- Skip offhand completely
+        if slot ~= "offhand" then
+            local def = stack:get_definition()
+            if def and def.armor then
+                totals.speed     = totals.speed     + (def.armor.speed or 0)
+                totals.gravity   = totals.gravity   + (def.armor.gravity or 0)
+                totals.jump      = totals.jump      + (def.armor.jump or 0)
+                totals.armor     = totals.armor     + (def.armor.armor or 0)
+                totals.knockback = totals.knockback + (def.armor.knockback or 0)
+                totals.block     = totals.block     + (def.armor.block or 0)
+            end
         end
     end
 
@@ -105,26 +108,14 @@ function count_stats(player)
 end
 
 -- API
-
 function ARMOR.get_stats(player)
     return count_stats(player)
 end
 
-function ARMOR.register_on_equip(func)
-    table.insert(ON_EQUIP, func)
-end
-
-function ARMOR.register_on_unequip(func)
-    table.insert(ON_UNEQUIP, func)
-end
-
-function ARMOR.register_pre_equip(func)
-    table.insert(PRE_EQUIP, func)
-end
-
-function ARMOR.register_pre_unequip(func)
-    table.insert(PRE_UNEQUIP, func)
-end
+function ARMOR.register_on_equip(func) table.insert(ON_EQUIP, func) end
+function ARMOR.register_on_unequip(func) table.insert(ON_UNEQUIP, func) end
+function ARMOR.register_pre_equip(func) table.insert(PRE_EQUIP, func) end
+function ARMOR.register_pre_unequip(func) table.insert(PRE_UNEQUIP, func) end
 
 function ARMOR.equip(player, stack, slot)
     if not player or not stack or stack:is_empty() or not is_valid_slot(slot) then
@@ -140,7 +131,10 @@ function ARMOR.equip(player, stack, slot)
     PLAYER_ARMOR[name] = PLAYER_ARMOR[name] or {}
     PLAYER_ARMOR[name][slot] = ItemStack(stack)
 
-    apply_physics(player)
+    -- Apply physics only if slot contributes stats
+    if slot ~= "offhand" then
+        apply_physics(player)
+    end
 
     for _, cb in ipairs(ON_EQUIP) do
         cb(player, stack, slot)
@@ -164,7 +158,9 @@ function ARMOR.unequip(player, slot)
         PLAYER_ARMOR[name][slot] = nil
     end
 
-    apply_physics(player)
+    if slot ~= "offhand" then
+        apply_physics(player)
+    end
 
     if old_stack and not old_stack:is_empty() then
         for _, cb in ipairs(ON_UNEQUIP) do
@@ -210,14 +206,13 @@ function ARMOR.get_equipped_list(player)
         table.insert(list, {
             slot = slot,
             item = stack:get_name(),
-            stack = stack:to_string(),  -- save as string
+            stack = stack:to_string(),
         })
     end
     return list
 end
 
--- Itemstack management 
-
+-- Itemstack management
 function sync_detached(player)
     if not player then return end
     local inv = core.get_inventory({type="detached", name=get_inv_name(player)})
@@ -233,7 +228,7 @@ local function restore_equipped(player, item_list)
     if not player or not item_list then return false end
     for _, entry in ipairs(item_list) do
         if entry.stack and entry.stack ~= "" then
-            local stack = ItemStack(entry.stack)  -- rebuild from string
+            local stack = ItemStack(entry.stack)
             if not stack:is_empty() then
                 ARMOR.equip(player, stack, entry.slot)
             end
@@ -293,16 +288,17 @@ function create_detached_inventory(player)
     return inv_name
 end
 
+-- Save equipped armor when player leaves
 core.register_on_leaveplayer(function(player)
     save_equipped(player)
 end)
 
+-- Restore equipped armor when player joins
 core.register_on_joinplayer(function(player)
     restore_equipped_from_storage(player)
-    sync_detached(player) 
+    sync_detached(player)
     create_detached_inventory(player)
 end)
-
 
 -- HP and Knockback calculations with stats
 core.register_on_player_hpchange(function(player, hp_change, reason)
@@ -318,7 +314,7 @@ core.register_on_player_hpchange(function(player, hp_change, reason)
             return 0
         end
 
-        local incoming = -hp_change 
+        local incoming = -hp_change
         local reduced_mag = incoming * (1 - defense / 100)
         local final_mag = math.max(1, math.floor(reduced_mag + 0.0001))
 
