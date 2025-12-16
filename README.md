@@ -7,6 +7,8 @@
 - Detached inventory integration with slot validation
 - Stat aggregation (speed, gravity, jump, armor, knockback, block)
 - Physics backend support (`pova`, `player_monoids`, or builtin fallback)
+- **Built-in physics engine (`armorforge.physics`)** when no external backend is available  
+  → Other mods using this API do not need to handle physics themselves — ArmorForge shares its physics system transparently
 - Metadata preservation for equipped items
 - HP reduction and knockback scaling based on stats
 - Block chance support (damage/knockback negation)
@@ -18,54 +20,36 @@
 
 ### Callback Registration
 ```lua
-armorforge.register_on_equip(func)
-armorforge.register_on_unequip(func)
-armorforge.register_pre_equip(func)
-armorforge.register_pre_unequip(func)
+armorforge.api.register_on_equip(func)
+armorforge.api.register_on_unequip(func)
+armorforge.api.register_pre_equip(func)
+armorforge.api.register_pre_unequip(func)
 ```
-- `func(player, stack, slot)` is called when equipping/unequipping.
-- Pre-callbacks can **return false** to cancel the action.
 
 ---
 
 ### Equip / Unequip
 ```lua
-armorforge.equip(player, stack, slot)
-armorforge.unequip(player, slot)
+armorforge.api.equip(player, stack, slot)
+armorforge.api.unequip(player, slot)
 ```
-- `equip` places an item into a slot and triggers callbacks.
-- `unequip` removes an item from a slot and triggers callbacks.
-- Physics are automatically updated for slots that contribute stats.
 
 ---
 
 ### Stats
 ```lua
-armorforge.get_stats(player)
+armorforge.api.get_stats(player)
 ```
-- Aggregates stats from all equipped items.
-- Default stats:  
-  `{speed=0, gravity=0, jump=0, armor=0, knockback=0, block=0}`
-- Values are clamped to safe ranges:  
-  - `speed` -10 → 10  
-  - `gravity` 0 → 10  
-  - `jump` -10 → 10  
-  - `armor` 0 → 95  
-  - `block` 0 → 100  
 
 ---
 
 ### Equipped Items
 ```lua
-armorforge.get_equipped(player)
-armorforge.get_equipped_in_slot(player, slot)
-armorforge.has_equipped(player, slot)
-armorforge.get_equipped_list(player)
+armorforge.api.get_equipped(player)
+armorforge.api.get_equipped_in_slot(player, slot)
+armorforge.api.has_equipped(player, slot)
+armorforge.api.get_equipped_list(player)
 ```
-- `get_equipped` → table of slot → ItemStack
-- `get_equipped_in_slot` → stack in a specific slot
-- `has_equipped` → boolean
-- `get_equipped_list` → list of `{slot, item, stack}`
 
 ---
 
@@ -74,84 +58,93 @@ armorforge.get_equipped_list(player)
 restore_equipped_from_storage(player)
 save_equipped(player)
 ```
-- Restores or saves equipped items using `mod_storage`.
+
+---
+
+## Physics Backend
+
+ArmorForge exposes its physics system under `armorforge.physics`.  
+This backend is automatically used if neither `pova` nor `player_monoids` are available.
+
+### Functions
+```lua
+armorforge.physics.add(name, key, def)
+armorforge.physics.del(name, key)
+armorforge.physics.apply(player)
+```
+
+- **add(name, key, def)** → Adds a physics override for a player under a unique key.  
+- **del(name, key)** → Removes a physics override by key.  
+- **apply(player)** → Applies all accumulated overrides to the player.
+
+### Supported Override Fields
+You can override any of the following physics properties:
+
+- **Movement speeds**  
+  - `speed`, `speed_walk`, `speed_climb`, `speed_crouch`, `speed_fast`
+- **Jump & gravity**  
+  - `jump`, `gravity`
+- **Liquid behavior**  
+  - `liquid_fluidity`, `liquid_fluidity_smooth`, `liquid_sink`
+- **Acceleration**  
+  - `acceleration_default`, `acceleration_air`, `acceleration_fast`
+- **Sneak & movement flags**  
+  - `sneak` (boolean)  
+  - `sneak_glitch` (boolean)  
+  - `new_move` (boolean)
+
+### Override Layers
+- **default** → Base values applied first.  
+- **additive keys** → Each override adds to the current value.  
+- **min** → Clamp values to a minimum.  
+- **max** → Clamp values to a maximum.  
+- **force** → Force values to exact numbers, overriding everything else.
+
+### Behavior
+- Overrides are merged together in order: `default` → additive → `min` → `max` → `force`.  
+- Numbers are summed, booleans are OR’d, other values replace.  
+- Automatically resets and applies overrides when players join/leave.  
+- Other mods can safely add/remove physics changes without worrying about conflicts — ArmorForge shares its physics system.
 
 ---
 
 ## Example Usage
 
-### Registering a Callback
+### Adding Physics Overrides
 ```lua
-armorforge.register_on_equip(function(player, stack, slot)
-    minetest.chat_send_player(player:get_player_name(),
-        "Equipped " .. stack:get_name() .. " in slot " .. slot)
-end)
-```
-
----
-
-### Custom Pre-Equip Logic
-```lua
-armorforge.register_pre_equip(function(player, stack, slot)
-    if stack:get_name() == "armor:forbidden_item" then
-        return false -- cancel equip
-    end
-end)
-```
-
----
-
-### Equipping an Item in a Specific Slot
-```lua
--- Equip a helmet
-local player = minetest.get_player_by_name("Danny")
-local helmet = ItemStack("armor:iron_helmet")
-armorforge.equip(player, helmet, "helmet")
-
--- Equip a shield
-local shield = ItemStack("armor:wooden_shield")
-armorforge.equip(player, shield, "shield")
-
--- Equip an offhand item (no physics)
-local torch = ItemStack("default:torch")
-armorforge.equip(player, torch, "offhand")
-```
-
----
-
-### Unequipping from a Specific Slot
-```lua
--- Remove whatever is in the chest slot
-armorforge.unequip(player, "chest")
-```
-
----
-
-### Checking Equipped Items
-```lua
--- Get the currently equipped helmet
-local helmet_stack = armorforge.get_equipped_in_slot(player, "helmet")
-if helmet_stack then
-    minetest.chat_send_player(player:get_player_name(),
-        "You are wearing: " .. helmet_stack:get_name())
-end
-
--- Check if player has a shield equipped
-if armorforge.has_equipped(player, "shield") then
-    minetest.chat_send_player(player:get_player_name(), "Shield equipped!")
-end
-```
-
----
-
-### Batch Restore Example
-```lua
--- Restore a saved equipment list without recalculating physics each time
-restore_equipped(player, {
-    {slot="helmet", stack="armor:iron_helmet"},
-    {slot="chest", stack="armor:iron_chestplate"},
-    {slot="shield", stack="armor:wooden_shield"},
+-- Give player extra jump and speed
+armorforge.physics.add("Danny", "armor_bonus", {
+    jump = 0.5,
+    speed = 0.2,
 })
+
+-- Apply changes
+armorforge.physics.apply(player)
+```
+
+### Clamping Values
+```lua
+-- Ensure gravity never drops below 0.5
+armorforge.physics.add("Danny", "gravity_min", {
+    gravity = 0.5,
+})
+armorforge.physics.apply(player)
+```
+
+### Forcing Values
+```lua
+-- Force sneak to always be enabled
+armorforge.physics.add("Danny", "force_sneak", {
+    sneak = true,
+})
+armorforge.physics.apply(player)
+```
+
+### Removing Overrides
+```lua
+-- Remove a specific override
+armorforge.physics.del("Danny", "armor_bonus")
+armorforge.physics.apply(player)
 ```
 
 ---
@@ -168,10 +161,9 @@ armor = {
     block = 10,
 }
 ```
-- Metadata is preserved when equipping/unequipping.
-- Overflow handling: items are dropped if inventory is full.
-- Physics backend is automatically selected (`pova`, `player_monoids`, or builtin).
-- HP and knockback are reduced according to `armor` and `block` stats.
+- Physics backend is automatically selected (`pova`, `player_monoids`, or builtin).  
+  → If neither is present, ArmorForge uses its **own physics engine** (`armorforge.physics`).  
+  → Other mods using this API automatically share this system — no duplicate physics handling required.
 
 ---
 
