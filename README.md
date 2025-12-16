@@ -49,16 +49,6 @@ armorforge.api.get_equipped(player)
 armorforge.api.get_equipped_in_slot(player, slot)
 armorforge.api.has_equipped(player, slot)
 armorforge.api.get_equipped_list(player)
-```
-
----
-
-### Persistence Helpers
-```lua
-restore_equipped_from_storage(player)
-save_equipped(player)
-```
-
 ---
 
 ## Physics Backend
@@ -113,7 +103,7 @@ You can override any of the following physics properties:
 ### Adding Physics Overrides
 ```lua
 -- Give player extra jump and speed
-armorforge.physics.add("Danny", "armor_bonus", {
+armorforge.physics.add("singleplayer", "armor_bonus", {
     jump = 0.5,
     speed = 0.2,
 })
@@ -125,7 +115,7 @@ armorforge.physics.apply(player)
 ### Clamping Values
 ```lua
 -- Ensure gravity never drops below 0.5
-armorforge.physics.add("Danny", "gravity_min", {
+armorforge.physics.add("singleplayer", "gravity_min", {
     gravity = 0.5,
 })
 armorforge.physics.apply(player)
@@ -134,7 +124,7 @@ armorforge.physics.apply(player)
 ### Forcing Values
 ```lua
 -- Force sneak to always be enabled
-armorforge.physics.add("Danny", "force_sneak", {
+armorforge.physics.add("singleplayer", "force_sneak", {
     sneak = true,
 })
 armorforge.physics.apply(player)
@@ -143,7 +133,7 @@ armorforge.physics.apply(player)
 ### Removing Overrides
 ```lua
 -- Remove a specific override
-armorforge.physics.del("Danny", "armor_bonus")
+armorforge.physics.del("singleplayer", "armor_bonus")
 armorforge.physics.apply(player)
 ```
 
