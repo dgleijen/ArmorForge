@@ -81,31 +81,41 @@ local function is_valid_slot(slot)
     return false
 end
 
--- Stats calculation (offhand ignored)
+local function clamp(x, minv, maxv)
+    if x < minv then return minv end
+    if x > maxv then return maxv end
+    return x
+end
+
 function count_stats(player)
+    local totals = table.copy(DEFAULT_STATS)
     local name = player:get_player_name()
     local equipped = PLAYER_ARMOR[name]
-    local totals = table.copy(DEFAULT_STATS)
-
     if not equipped then return totals end
 
     for slot, stack in pairs(equipped) do
-        -- Skip offhand completely
         if slot ~= "offhand" then
             local def = stack:get_definition()
-            if def and def.armor then
-                totals.speed     = totals.speed     + (def.armor.speed or 0)
-                totals.gravity   = totals.gravity   + (def.armor.gravity or 0)
-                totals.jump      = totals.jump      + (def.armor.jump or 0)
-                totals.armor     = totals.armor     + (def.armor.armor or 0)
-                totals.knockback = totals.knockback + (def.armor.knockback or 0)
-                totals.block     = totals.block     + (def.armor.block or 0)
+            local a = def and def.armor
+            if a then
+                totals.speed     = totals.speed     + (a.speed or 0)
+                totals.gravity   = totals.gravity   + (a.gravity or 0)
+                totals.jump      = totals.jump      + (a.jump or 0)
+                totals.armor     = totals.armor     + (a.armor or 0)
+                totals.knockback = totals.knockback + (a.knockback or 0)
+                totals.block     = totals.block     + (a.block or 0)
             end
         end
     end
 
+    totals.speed   = clamp(totals.speed,   -10, 10)
+    totals.gravity = clamp(totals.gravity,  0, 10)
+    totals.jump    = clamp(totals.jump,    -10, 10)
+    totals.armor   = clamp(totals.armor,    0, 95)
+    totals.block   = clamp(totals.block,    0, 100)
     return totals
 end
+
 
 -- API
 function ARMOR.get_stats(player)
@@ -121,17 +131,36 @@ function ARMOR.equip(player, stack, slot)
     if not player or not stack or stack:is_empty() or not is_valid_slot(slot) then
         return false
     end
+
+    local name = player:get_player_name()
+    PLAYER_ARMOR[name] = PLAYER_ARMOR[name] or {}
+
+    local current = PLAYER_ARMOR[name][slot]
+    if current and current:to_string() == stack:to_string() then
+        -- No-op: same item already equipped
+        return true
+    end
+
+    -- If something is equipped, unequip it first (with callbacks)
+    if current and not current:is_empty() then
+        for _, cb in ipairs(PRE_UNEQUIP) do
+            if cb(player, current, slot) == false then return false end
+        end
+        PLAYER_ARMOR[name][slot] = nil
+        for _, cb in ipairs(ON_UNEQUIP) do cb(player, current, slot) end
+    end
+
+    -- Pre-equip validation for the new item
     for _, cb in ipairs(PRE_EQUIP) do
         if cb(player, stack, slot) == false then
             return false
         end
     end
 
-    local name = player:get_player_name()
-    PLAYER_ARMOR[name] = PLAYER_ARMOR[name] or {}
+    -- Equip
     PLAYER_ARMOR[name][slot] = ItemStack(stack)
 
-    -- Apply physics only if slot contributes stats
+    -- Physics only if slot contributes stats
     if slot ~= "offhand" then
         apply_physics(player)
     end
@@ -215,7 +244,8 @@ end
 -- Itemstack management
 function sync_detached(player)
     if not player then return end
-    local inv = core.get_inventory({type="detached", name=get_inv_name(player)})
+    local inv_name = get_inv_name(player)
+    local inv = core.get_inventory({type="detached", name=inv_name})
     if not inv then return end
 
     local equipped = ARMOR.get_equipped(player)
@@ -224,18 +254,36 @@ function sync_detached(player)
     end
 end
 
+local function with_physics_suppressed(player, fn)
+    local old_apply = apply_physics
+    local suppressed = false
+    apply_physics = function() suppressed = true end
+
+    local ok = fn()
+
+    apply_physics = old_apply
+    if suppressed then
+        old_apply(player) -- recompute once
+    end
+    return ok
+end
+
+-- Example: batch during restore
 local function restore_equipped(player, item_list)
     if not player or not item_list then return false end
-    for _, entry in ipairs(item_list) do
-        if entry.stack and entry.stack ~= "" then
-            local stack = ItemStack(entry.stack)
-            if not stack:is_empty() then
-                ARMOR.equip(player, stack, entry.slot)
+    return with_physics_suppressed(player, function()
+        for _, entry in ipairs(item_list) do
+            if entry.stack and entry.stack ~= "" then
+                local stack = ItemStack(entry.stack)
+                if not stack:is_empty() then
+                    ARMOR.equip(player, stack, entry.slot)
+                end
             end
         end
-    end
-    return true
+        return true
+    end)
 end
+
 
 function restore_equipped_from_storage(player)
     if not player then return false end
@@ -256,25 +304,37 @@ local function save_equipped(player)
     return true
 end
 
-function create_detached_inventory(player)
-    if not player then return nil end
+local function matches_slot(stack, slot)
+    local def = stack:get_definition()
+    return def and def.armor and def.armor.slot == slot
+end
+
+-- Define the inventory creation function
+local function create_detached_inventory(player)
     local inv_name = get_inv_name(player)
-
-    if core.get_inventory({type="detached", name=inv_name}) then
-        core.remove_detached_inventory(inv_name)
+    
+    -- Check if inventory already exists
+    if core.get_inventory({type="detached", name=inv_name}) then 
+        return 
     end
-
-    local inv = core.create_detached_inventory(inv_name, {
+    
+    core.create_detached_inventory(inv_name, {
         allow_put = function(inv, listname, index, stack, player)
-            return stack:get_count()
+            local slot = DEFAULT_SLOTS[index]
+            if matches_slot(stack, slot) then
+                return stack:get_count()
+            end
+            return 0
         end,
         allow_take = function(inv, listname, index, stack, player)
             return stack:get_count()
         end,
         on_put = function(inv, listname, index, stack, player)
             local slot = DEFAULT_SLOTS[index]
-            ARMOR.equip(player, stack, slot)
-            sync_detached(player)
+            if matches_slot(stack, slot) then
+                ARMOR.equip(player, stack, slot)
+                sync_detached(player)
+            end
         end,
         on_take = function(inv, listname, index, stack, player)
             local slot = DEFAULT_SLOTS[index]
@@ -282,10 +342,9 @@ function create_detached_inventory(player)
             sync_detached(player)
         end
     })
-
-    inv:set_size("main", #DEFAULT_SLOTS)
+    
+    -- Sync the inventory with current equipment
     sync_detached(player)
-    return inv_name
 end
 
 -- Save equipped armor when player leaves
@@ -296,8 +355,8 @@ end)
 -- Restore equipped armor when player joins
 core.register_on_joinplayer(function(player)
     restore_equipped_from_storage(player)
-    sync_detached(player)
     create_detached_inventory(player)
+    apply_physics(player)  -- Ensure physics are applied after restore
 end)
 
 -- HP and Knockback calculations with stats
